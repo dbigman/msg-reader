@@ -57,35 +57,122 @@ func (a *App) startup(ctx context.Context) {
 			}
 		})
 		
-		// Start a goroutine to directly open the file after a delay
-		// This is a fallback in case the frontend-ready event is never received
-		go func() {
-			fmt.Println("Starting delayed file opening goroutine")
-			// Wait for 2 seconds to give the frontend time to initialize
-			time.Sleep(2 * time.Second)
+		// Set up a DOM ready event listener to handle the case where the frontend is ready but hasn't emitted the frontend-ready event
+		fmt.Println("Setting up dom-ready event listener")
+		wailsRuntime.EventsOn(ctx, "dom-ready", func(optionalData ...interface{}) {
+			fmt.Println("Received dom-ready event, checking if file has been opened")
 			
 			// Check if the file has been opened already
-			fmt.Println("Checking if file needs to be opened directly")
 			if len(a.filesToOpenOnStartup) > 0 {
-				fmt.Println("Opening file directly after delay:", a.filesToOpenOnStartup[0])
+				fmt.Println("Opening file after DOM ready:", a.filesToOpenOnStartup[0])
 				// Try to open the file directly
 				a.DirectOpenFile(a.filesToOpenOnStartup[0])
+			}
+		})
+		
+		// Also execute JavaScript directly to handle the file
+		// This is a more direct approach that doesn't rely on events
+		go func() {
+			// Wait a short time for the window to be created
+			time.Sleep(500 * time.Millisecond)
+			
+			if len(a.filesToOpenOnStartup) > 0 {
+				fmt.Println("Executing JavaScript to handle file directly:", a.filesToOpenOnStartup[0])
 				
-				// Also try to execute JavaScript directly
+				// Read the file
+				data, err := os.ReadFile(a.filesToOpenOnStartup[0])
+				if err != nil {
+					fmt.Println("Error reading file:", err)
+					return
+				}
+				
+				// Get the file name from the path
+				fileName := filepath.Base(a.filesToOpenOnStartup[0])
+				fmt.Println("File name extracted from path:", fileName)
+				
+				// Convert the data to a base64 string for embedding in JavaScript
+				base64Data := base64.StdEncoding.EncodeToString(data)
+				fmt.Println("Base64 data length:", len(base64Data))
+				
+				// Create a JavaScript function to process the file
 				js := fmt.Sprintf(`
-					console.log("Executing direct JavaScript to open file");
-					if (window.app && window.app.fileHandler) {
-						console.log("App is initialized, handling file directly");
-						window.app.fileHandler.handleDesktopFile("%s");
-					} else {
-						console.log("App is not initialized, cannot handle file directly");
-						// Store the file to open when the app is ready
-						window._filesToOpenWhenReady = ["%s"];
-						console.log("Stored file to open when app is ready");
+					console.log("Processing file directly in JavaScript");
+					
+					// Function to convert base64 to ArrayBuffer
+					function base64ToArrayBuffer(base64) {
+						var binary_string = window.atob(base64);
+						var len = binary_string.length;
+						var bytes = new Uint8Array(len);
+						for (var i = 0; i < len; i++) {
+							bytes[i] = binary_string.charCodeAt(i);
+						}
+						return bytes.buffer;
 					}
-				`, a.filesToOpenOnStartup[0], a.filesToOpenOnStartup[0])
+					
+					// Convert the base64 data to an ArrayBuffer
+					var fileData = base64ToArrayBuffer("%s");
+					console.log("File data converted to ArrayBuffer, length:", fileData.byteLength);
+					
+					// Get the file extension
+					var fileName = "%s";
+					var extension = fileName.toLowerCase().split('.').pop();
+					console.log("File extension:", extension);
+					
+					// Function to process the file when the app is ready
+					function processFileWhenReady() {
+						console.log("Checking if app is ready to process file");
+						if (window.app && window.app.fileHandler) {
+							console.log("App is ready, processing file");
+							
+							try {
+								// Extract the message info
+								var msgInfo;
+								if (extension === 'msg' && window.extractMsg) {
+									console.log("Extracting MSG file");
+									msgInfo = window.extractMsg(fileData);
+								} else if (extension === 'eml' && window.extractEml) {
+									console.log("Extracting EML file");
+									msgInfo = window.extractEml(fileData);
+								} else {
+									console.error("Unsupported file extension or extraction function not available");
+									return;
+								}
+								
+								if (!msgInfo) {
+									console.error("Failed to extract message info");
+									return;
+								}
+								
+								console.log("Message extracted successfully");
+								
+								// Add the message to the message handler
+								var message = window.app.messageHandler.addMessage(msgInfo, fileName);
+								
+								// Show the app container
+								window.app.uiManager.showAppContainer();
+								
+								// Update the message list
+								window.app.uiManager.updateMessageList();
+								
+								// Show the message
+								window.app.uiManager.showMessage(message);
+								
+								console.log("Message displayed successfully");
+							} catch (error) {
+								console.error("Error processing file:", error);
+							}
+						} else {
+							console.log("App not ready yet, waiting...");
+							setTimeout(processFileWhenReady, 500);
+						}
+					}
+					
+					// Start processing the file
+					processFileWhenReady();
+				`, base64Data, fileName)
 				
-				fmt.Println("Executing JavaScript:", js)
+				// Execute the JavaScript
+				fmt.Println("Executing JavaScript to process file")
 				wailsRuntime.WindowExecJS(ctx, js)
 			}
 		}()
