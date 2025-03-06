@@ -8,5 +8,58 @@
   "author": {
     "name": "Torben Buck",
     "email": ""
+  },
+  "info": {
+    "companyName": "Torben Buck",
+    "productName": "msgReader",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2025 Torben Buck",
+    "comments": "MSG and EML file viewer"
+  },
+  "nsisType": "single",
+  "mac": {
+    "entitlements": "",
+    "exceptionDomain": "",
+    "frameworks": [],
+    "provisioningProfile": "",
+    "signingIdentity": "",
+    "applicationCategory": "public.app-category.utilities",
+    "electronUpdaterURL": "",
+    "fileAssociations": [
+      {
+        "ext": "msg",
+        "name": "Microsoft Outlook Message",
+        "role": "Editor",
+        "isPackage": false,
+        "icon": "",
+        "mimeType": "application/vnd.ms-outlook"
+      },
+      {
+        "ext": "eml",
+        "name": "Email Message",
+        "role": "Editor",
+        "isPackage": false,
+        "icon": "",
+        "mimeType": "message/rfc822"
+      }
+    ]
+  },
+  "windows": {
+    "fileAssociations": [
+      {
+        "ext": "msg",
+        "name": "Microsoft Outlook Message",
+        "description": "Microsoft Outlook Message",
+        "icon": "",
+        "mimeType": "application/vnd.ms-outlook"
+      },
+      {
+        "ext": "eml",
+        "name": "Email Message",
+        "description": "Email Message",
+        "icon": "",
+        "mimeType": "message/rfc822"
+      }
+    ]
   }
 } 

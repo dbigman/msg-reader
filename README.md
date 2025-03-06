@@ -87,6 +87,11 @@ cd desktop
 
 The built application will be in the `desktop/build/bin` directory.
 
+### File Associations
+The desktop application can be registered as the default application for opening .msg and .eml files. This allows you to double-click on these files in your file explorer to open them directly in msgReader.
+
+You can register file associations by clicking the "Register as Default App" button on the welcome screen of the desktop application.
+
 ## Development (Web)
 1. Clone the repository
 ```bash
