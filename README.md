@@ -13,13 +13,13 @@ I am currently writing with the Microsoft Support to get this issue fixed, but u
 ... also - WHY would you put a paywall in front of a file format that you created?
 
 ## Features
-- Open and read *.msg and *.eml files directly in your browser
+- Open and read *.msg and *.eml files directly in your browser or desktop application
 - View HTML content and inline images
 - Pin important messages
 - Multiple file support with message list
 - Sort messages by date
 - Drag & drop support
-- No server needed - everything runs in your browser
+- No server needed - everything runs in your browser or locally
 
 ## Project Structure
 The project is organized into several modules:
@@ -28,6 +28,7 @@ The project is organized into several modules:
 - `FileHandler.js` - Manages file operations and drag & drop
 - `utils.js` - Contains MSG file processing and utility functions
 - `main.js` - Initializes and orchestrates the application
+- `desktop/` - Contains the desktop application built with Wails and Go
 
 ## HYPER Quick Start (GitHub Pages)
 1. Open [rasalas.github.io/msg-reader/](https://rasalas.github.io/msg-reader/)
@@ -54,7 +55,39 @@ npm start
 ```
 A browser window should open with the application running.
 
-## Development
+## Desktop Application
+The project now includes a desktop application built with Wails and Go. This allows you to run the application as a native desktop application on Windows, macOS, and Linux.
+
+### Prerequisites
+To build the desktop application, you need:
+- Go 1.21 or later
+- Wails CLI
+- Platform-specific dependencies for Wails
+
+### Installing Wails
+Run the installation script:
+```bash
+cd desktop
+./install-wails.sh
+```
+
+### Development
+To start the development server for the desktop application:
+```bash
+cd desktop
+./dev.sh
+```
+
+### Building
+To build the desktop application:
+```bash
+cd desktop
+./build.sh
+```
+
+The built application will be in the `desktop/build/bin` directory.
+
+## Development (Web)
 1. Clone the repository
 ```bash
 git clone https://github.com/Rasalas/msg-reader.git
@@ -83,6 +116,10 @@ The application uses browserify to bundle the JavaScript modules and tailwindcss
 - `npm run watch` - Watches for changes and rebuilds
 - `npm run dev` - Runs development server with live reload
 - `npm run deploy` - Deploys to GitHub Pages
+
+For the desktop application, use the scripts in the `desktop` directory:
+- `./desktop/dev.sh` - Starts the Wails development server
+- `./desktop/build.sh` - Builds the Wails desktop application
 
 ## Other links
 
