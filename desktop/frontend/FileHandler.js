@@ -93,43 +93,20 @@ class FileHandler {
         }
         
         // Process files one by one with a small delay between them
-        const processFiles = (index) => {
+        const processFiles = async (index) => {
             if (index >= filePaths.length) {
                 console.log('Finished processing all files');
                 return;
             }
             
-            const filePath = filePaths[index];
-            if (!filePath) {
-                console.error('Empty file path in filePaths array');
-                processFiles(index + 1);
-                return;
+            try {
+                await this.handleDesktopFile(filePaths[index]);
+            } catch (error) {
+                console.error('Error processing file:', filePaths[index], error);
             }
             
-            // Normalize the file path (handle spaces and special characters)
-            const normalizedPath = decodeURIComponent(filePath);
-            console.log('Normalized file path:', normalizedPath);
-            
-            const extension = normalizedPath.toLowerCase().split('.').pop();
-            console.log('Processing file path:', normalizedPath, 'with extension:', extension);
-            if (extension === 'msg' || extension === 'eml') {
-                // Process the file
-                this.handleDesktopFile(normalizedPath)
-                    .then(() => {
-                        console.log('Successfully processed file:', normalizedPath);
-                        // Process the next file after a small delay
-                        setTimeout(() => processFiles(index + 1), 100);
-                    })
-                    .catch(error => {
-                        console.error('Error processing file:', normalizedPath, error);
-                        // Continue with the next file even if there was an error
-                        setTimeout(() => processFiles(index + 1), 100);
-                    });
-            } else {
-                console.warn('Skipping file with unsupported extension:', extension);
-                // Continue with the next file
-                setTimeout(() => processFiles(index + 1), 100);
-            }
+            // Process next file after a short delay
+            setTimeout(() => processFiles(index + 1), 100);
         };
         
         // Start processing files

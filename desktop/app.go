@@ -35,156 +35,54 @@ func (a *App) startup(ctx context.Context) {
 	if len(a.filesToOpenOnStartup) > 0 {
 		fmt.Println("Files to open on startup:", a.filesToOpenOnStartup)
 		
-		// Emit the event immediately as well (in case the frontend is already ready)
-		fmt.Println("Emitting initial files-to-open event with:", a.filesToOpenOnStartup)
-		wailsRuntime.EventsEmit(ctx, "files-to-open", a.filesToOpenOnStartup)
+		// Set up a channel to wait for frontend ready signal
+		frontendReady := make(chan bool)
 		
-		// Also wait for the frontend to signal it's ready
-		fmt.Println("Setting up frontend-ready event listener")
+		// Listen for frontend-ready event
 		wailsRuntime.EventsOn(ctx, "frontend-ready", func(optionalData ...interface{}) {
-			fmt.Println("Received frontend-ready event, emitting files-to-open event again with:", a.filesToOpenOnStartup)
-			// Emit an event to the frontend with the files to open
-			wailsRuntime.EventsEmit(ctx, "files-to-open", a.filesToOpenOnStartup)
-			
-			// Also emit a direct event to force file opening
-			fmt.Println("Emitting force-open-files event with:", a.filesToOpenOnStartup)
-			wailsRuntime.EventsEmit(ctx, "force-open-files", a.filesToOpenOnStartup)
-			
-			// Also try to directly open the first file
-			if len(a.filesToOpenOnStartup) > 0 {
-				fmt.Println("Directly opening first file:", a.filesToOpenOnStartup[0])
-				a.DirectOpenFile(a.filesToOpenOnStartup[0])
-			}
+			fmt.Println("Received frontend-ready event")
+			frontendReady <- true
 		})
 		
-		// Set up a DOM ready event listener to handle the case where the frontend is ready but hasn't emitted the frontend-ready event
-		fmt.Println("Setting up dom-ready event listener")
-		wailsRuntime.EventsOn(ctx, "dom-ready", func(optionalData ...interface{}) {
-			fmt.Println("Received dom-ready event, checking if file has been opened")
-			
-			// Check if the file has been opened already
-			if len(a.filesToOpenOnStartup) > 0 {
-				fmt.Println("Opening file after DOM ready:", a.filesToOpenOnStartup[0])
-				// Try to open the file directly
-				a.DirectOpenFile(a.filesToOpenOnStartup[0])
-			}
-		})
-		
-		// Also execute JavaScript directly to handle the file
-		// This is a more direct approach that doesn't rely on events
+		// Start a goroutine to handle file opening
 		go func() {
-			// Wait a short time for the window to be created
-			time.Sleep(500 * time.Millisecond)
+			// Wait for either frontend ready signal or timeout
+			select {
+			case <-frontendReady:
+				fmt.Println("Frontend is ready, proceeding with file opening")
+			case <-time.After(5 * time.Second):
+				fmt.Println("Timeout waiting for frontend, attempting to open files anyway")
+			}
 			
-			if len(a.filesToOpenOnStartup) > 0 {
-				fmt.Println("Executing JavaScript to handle file directly:", a.filesToOpenOnStartup[0])
+			// Ensure the window is fully created
+			time.Sleep(100 * time.Millisecond)
+			
+			// Try to open each file
+			for _, filePath := range a.filesToOpenOnStartup {
+				fmt.Printf("Attempting to open file: %s\n", filePath)
 				
-				// Read the file
-				data, err := os.ReadFile(a.filesToOpenOnStartup[0])
+				// Read the file to verify it exists and is accessible
+				data, err := os.ReadFile(filePath)
 				if err != nil {
-					fmt.Println("Error reading file:", err)
-					return
+					fmt.Printf("Error reading file %s: %v\n", filePath, err)
+					continue
 				}
 				
-				// Get the file name from the path
-				fileName := filepath.Base(a.filesToOpenOnStartup[0])
-				fmt.Println("File name extracted from path:", fileName)
+				fmt.Printf("Successfully read file %s, size: %d bytes\n", filePath, len(data))
 				
-				// Convert the data to a base64 string for embedding in JavaScript
-				base64Data := base64.StdEncoding.EncodeToString(data)
-				fmt.Println("Base64 data length:", len(base64Data))
+				// Emit events to the frontend
+				wailsRuntime.EventsEmit(ctx, "files-to-open", []string{filePath})
+				time.Sleep(100 * time.Millisecond)
+				wailsRuntime.EventsEmit(ctx, "force-open-files", []string{filePath})
 				
-				// Create a JavaScript function to process the file
-				js := fmt.Sprintf(`
-					console.log("Processing file directly in JavaScript");
-					
-					// Function to convert base64 to ArrayBuffer
-					function base64ToArrayBuffer(base64) {
-						var binary_string = window.atob(base64);
-						var len = binary_string.length;
-						var bytes = new Uint8Array(len);
-						for (var i = 0; i < len; i++) {
-							bytes[i] = binary_string.charCodeAt(i);
-						}
-						return bytes.buffer;
-					}
-					
-					// Convert the base64 data to an ArrayBuffer
-					var fileData = base64ToArrayBuffer("%s");
-					console.log("File data converted to ArrayBuffer, length:", fileData.byteLength);
-					
-					// Get the file extension
-					var fileName = "%s";
-					var extension = fileName.toLowerCase().split('.').pop();
-					console.log("File extension:", extension);
-					
-					// Function to process the file when the app is ready
-					function processFileWhenReady() {
-						console.log("Checking if app is ready to process file");
-						if (window.app && window.app.fileHandler) {
-							console.log("App is ready, processing file");
-							
-							try {
-								// Extract the message info
-								var msgInfo;
-								if (extension === 'msg' && window.extractMsg) {
-									console.log("Extracting MSG file");
-									msgInfo = window.extractMsg(fileData);
-								} else if (extension === 'eml' && window.extractEml) {
-									console.log("Extracting EML file");
-									msgInfo = window.extractEml(fileData);
-								} else {
-									console.error("Unsupported file extension or extraction function not available");
-									return;
-								}
-								
-								if (!msgInfo) {
-									console.error("Failed to extract message info");
-									return;
-								}
-								
-								console.log("Message extracted successfully");
-								
-								// Add the message to the message handler
-								var message = window.app.messageHandler.addMessage(msgInfo, fileName);
-								
-								// Show the app container
-								window.app.uiManager.showAppContainer();
-								
-								// Update the message list
-								window.app.uiManager.updateMessageList();
-								
-								// Show the message
-								window.app.uiManager.showMessage(message);
-								
-								console.log("Message displayed successfully");
-							} catch (error) {
-								console.error("Error processing file:", error);
-							}
-						} else {
-							console.log("App not ready yet, waiting...");
-							setTimeout(processFileWhenReady, 500);
-						}
-					}
-					
-					// Start processing the file
-					processFileWhenReady();
-				`, base64Data, fileName)
-				
-				// Execute the JavaScript
-				fmt.Println("Executing JavaScript to process file")
-				wailsRuntime.WindowExecJS(ctx, js)
+				// Also try direct file opening as a fallback
+				a.DirectOpenFile(filePath)
 			}
 		}()
-		
-		// Mark as initialized
-		a.initialized = true
-		fmt.Println("App marked as initialized (with files to open)")
-	} else {
-		// Mark as initialized immediately if no files to open
-		a.initialized = true
-		fmt.Println("App marked as initialized (no files to open)")
 	}
+	
+	// Mark the app as initialized
+	a.initialized = true
 }
 
 // OpenFile allows the frontend to request opening a file
