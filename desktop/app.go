@@ -477,4 +477,50 @@ func (a *App) DirectOpenFile(filePath string) {
 	// Execute the JavaScript
 	fmt.Println("Executing JavaScript to process file")
 	wailsRuntime.WindowExecJS(a.ctx, js)
+}
+
+// handleFileOpen handles macOS file open events
+func (a *App) handleFileOpen(filePath string) {
+	fmt.Printf("Received macOS file open event for: %s\n", filePath)
+	
+	// Get the absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		fmt.Printf("Error getting absolute path for %s: %v\n", filePath, err)
+		absPath = filePath
+	}
+	
+	// Verify the file exists and is accessible
+	if _, err := os.Stat(absPath); err != nil {
+		fmt.Printf("Error accessing file %s: %v\n", absPath, err)
+		return
+	}
+	
+	// If the app is not initialized yet, store the file for later
+	if !a.initialized {
+		fmt.Printf("App not initialized yet, storing file %s for later\n", absPath)
+		a.filesToOpenOnStartup = append(a.filesToOpenOnStartup, absPath)
+		return
+	}
+	
+	// Start a goroutine to handle the file opening
+	go func() {
+		fmt.Printf("Starting goroutine to open file: %s\n", absPath)
+		
+		// Try to read the file first to verify it's accessible
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			fmt.Printf("Error reading file %s: %v\n", absPath, err)
+			return
+		}
+		fmt.Printf("Successfully read file %s, size: %d bytes\n", absPath, len(data))
+		
+		// Emit events to the frontend
+		wailsRuntime.EventsEmit(a.ctx, "files-to-open", []string{absPath})
+		time.Sleep(100 * time.Millisecond)
+		wailsRuntime.EventsEmit(a.ctx, "force-open-files", []string{absPath})
+		
+		// Also try direct file opening as a fallback
+		a.DirectOpenFile(absPath)
+	}()
 } 
