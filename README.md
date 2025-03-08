@@ -21,6 +21,73 @@ I am currently writing with the Microsoft Support to get this issue fixed, but u
 - Drag & drop support
 - No server needed - everything runs in your browser or locally
 
+## Installation
+
+### Web Version
+The web version is available at [rasalas.github.io/msg-reader/](https://rasalas.github.io/msg-reader/) and requires no installation.
+
+### Desktop Version
+Download the latest version for your operating system from the [Releases page](https://github.com/Rasalas/msg-reader/releases).
+
+#### Windows
+1. Download `msgReader-windows-amd64.zip`
+2. Extract the ZIP file
+3. Run `msgReader.exe`
+4. (Optional) Right-click on a .msg or .eml file → Open with → Choose another app → More apps → Look for another app on this PC → Select msgReader.exe
+
+#### macOS
+1. Download `msgReader-macos-universal.zip`
+2. Extract the ZIP file
+3. Move `msgReader.app` to your Applications folder
+4. (Optional) Right-click on a .msg or .eml file → Open With → Other... → Applications → msgReader.app → Always Open With
+
+Note: On first launch, you might need to:
+- Right-click the app and select "Open" to bypass Gatekeeper
+- Go to System Settings → Privacy & Security and allow the app to run
+
+#### Linux
+1. Download `msgReader-linux-amd64.zip`
+2. Extract the ZIP file
+3. Make the file executable:
+   ```bash
+   chmod +x msgReader
+   ```
+4. Run the application:
+   ```bash
+   ./msgReader
+   ```
+5. (Optional) Create a desktop entry for file associations:
+   ```bash
+   cat > ~/.local/share/applications/msgreader.desktop << EOL
+   [Desktop Entry]
+   Type=Application
+   Name=msgReader
+   Exec=/path/to/msgReader %f
+   Icon=/path/to/icon.png
+   MimeType=application/vnd.ms-outlook;message/rfc822;
+   Categories=Office;Email;
+   EOL
+   ```
+
+### Command Line Usage
+After installation, you can open files directly from the command line:
+
+```bash
+# Windows
+msgReader.exe "path/to/email.msg"
+
+# macOS
+/Applications/msgReader.app/Contents/MacOS/msgReader "path/to/email.msg"
+
+# Linux
+./msgReader "path/to/email.msg"
+```
+
+Multiple files can be opened at once:
+```bash
+msgReader file1.msg file2.eml file3.msg
+```
+
 ## Project Structure
 The project is organized into several modules:
 - `MessageHandler.js` - Manages message state and storage

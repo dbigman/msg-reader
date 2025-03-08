@@ -1,0 +1,100 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: universal
+            artifact_name: msgReader.app
+            asset_name: msgReader-macos-universal.zip
+          - os: windows-latest
+            platform: windows
+            arch: amd64
+            artifact_name: msgReader.exe
+            asset_name: msgReader-windows-amd64.zip
+          - os: ubuntu-latest
+            platform: linux
+            arch: amd64
+            artifact_name: msgReader
+            asset_name: msgReader-linux-amd64.zip
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.0'
+          cache: true
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+
+      - name: Install frontend dependencies
+        run: |
+          cd desktop
+          npm install
+
+      - name: Build application
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          cd desktop
+          wails build -platform $PLATFORM/$ARCH -o msgReader
+
+      - name: Package macOS application
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd desktop/build/bin
+          zip -r ${{ matrix.asset_name }} msgReader.app
+
+      - name: Package Windows application
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd desktop/build/bin
+          Compress-Archive -Path msgReader.exe -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Package Linux application
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd desktop/build/bin
+          zip -r ${{ matrix.asset_name }} msgReader
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: desktop/build/bin/${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            msgReader-macos-universal.zip/msgReader-macos-universal.zip
+            msgReader-windows-amd64.zip/msgReader-windows-amd64.zip
+            msgReader-linux-amd64.zip/msgReader-linux-amd64.zip
+          draft: true # Creates a draft release for manual review
+          generate_release_notes: true # Automatically generate release notes from commits 
