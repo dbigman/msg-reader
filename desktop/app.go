@@ -42,7 +42,6 @@ func (a *App) startup(ctx context.Context) {
 	wailsRuntime.WindowShow(ctx)
 
 	// Mark the app as initialized AND ready immediately
-	// This fixes the issue where the app is visibly running but still marked as not ready
 	a.initialized = true
 	a.appReady = true
 	fmt.Println("App marked as ready on startup")
@@ -53,19 +52,28 @@ func (a *App) startup(ctx context.Context) {
 		a.filesToOpenOnStartup = nil
 		fmt.Println("Files to process at startup:", startupFiles)
 
-		// Launch a goroutine to handle these files after a short delay
-		// to allow the UI to initialize
-		go func() {
-			// Short delay to let the UI initialize
-			time.Sleep(500 * time.Millisecond)
+		// CRITICAL: For immediate display of the first file, we process it immediately
+		// instead of waiting for a delay
+		if len(startupFiles) > 0 {
+			firstFile := startupFiles[0]
+			fmt.Println("Immediately processing first file:", firstFile)
 
-			// Process each startup file
-			for _, file := range startupFiles {
-				fmt.Println("Processing startup file:", file)
-				// Try direct JavaScript execution
-				a.executeOpenFileJavaScript(file)
+			// Use direct JavaScript approach for immediate visibility
+			a.executeOpenFirstFileJavaScript(firstFile)
+
+			// Process any remaining files with a small delay
+			if len(startupFiles) > 1 {
+				remainingFiles := startupFiles[1:]
+				go func() {
+					// Short delay for remaining files
+					time.Sleep(500 * time.Millisecond)
+					for _, file := range remainingFiles {
+						fmt.Println("Processing additional startup file:", file)
+						a.executeOpenFileJavaScript(file)
+					}
+				}()
 			}
-		}()
+		}
 	}
 
 	// Still listen for frontend-ready as a backup
@@ -109,11 +117,23 @@ func (a *App) handleFileOpen(filePath string) {
 	// Direct processing approach
 	fmt.Printf("Processing file directly: %s\n", absPath)
 
-	// 1. Try to emit an event to the frontend
-	wailsRuntime.EventsEmit(a.ctx, "open-file-now", absPath)
+	// Check if this is the first file message in the app
+	// For the first file, we want to use the high-priority method
+	a.filesMutex.Lock()
+	isFirstFile := len(a.pendingFiles) <= 1
+	a.filesMutex.Unlock()
 
-	// 2. Also use direct JavaScript execution
-	a.executeOpenFileJavaScript(absPath)
+	if isFirstFile {
+		// Use the highest priority method for the first file
+		fmt.Println("Using high-priority method for first file")
+		a.executeOpenFirstFileJavaScript(absPath)
+	} else {
+		// Standard method for additional files
+		a.executeOpenFileJavaScript(absPath)
+	}
+
+	// Also emit an event to the frontend
+	wailsRuntime.EventsEmit(a.ctx, "open-file-now", absPath)
 }
 
 // executeOpenFileJavaScript executes JavaScript directly to open a file
@@ -147,7 +167,7 @@ func (a *App) executeOpenFileJavaScript(filePath string) {
 		function processFile() {
 			try {
 				// Check if the app is ready
-				if (!window.app || !window.app.fileHandler) {
+				if (!window.app || !window.app.fileHandler || !window.app.uiManager) {
 					console.log("App not ready, will retry in 200ms");
 					setTimeout(processFile, 200);
 					return;
@@ -166,6 +186,9 @@ func (a *App) executeOpenFileJavaScript(filePath string) {
 				const fileName = "%s";
 				
 				console.log("Processing file:", fileName);
+				
+				// Make sure UI is visible
+				window.app.uiManager.showAppContainer();
 				
 				// Extract the message info
 				let msgInfo;
@@ -190,14 +213,15 @@ func (a *App) executeOpenFileJavaScript(filePath string) {
 				// Add the message
 				const message = window.app.messageHandler.addMessage(msgInfo, fileName);
 				
-				// Show app container
-				window.app.uiManager.showAppContainer();
-				
 				// Update the message list
 				window.app.uiManager.updateMessageList();
 				
-				// Show the message
-				window.app.uiManager.showMessage(message);
+				// If only 1 message exists, show it
+				const messages = window.app.messageHandler.getMessages();
+				if (messages.length === 1) {
+					// This is the first message, show it
+					window.app.uiManager.showMessage(message);
+				}
 				
 				console.log("File processed successfully via direct JavaScript execution");
 			} catch (error) {
@@ -207,6 +231,105 @@ func (a *App) executeOpenFileJavaScript(filePath string) {
 		
 		// Start processing
 		processFile();
+	`, fileName, base64Data, extension, fileName)
+
+	// Execute the JavaScript
+	wailsRuntime.WindowExecJS(a.ctx, js)
+}
+
+// executeOpenFirstFileJavaScript executes JavaScript specifically optimized for opening the first file
+// with highest priority and immediate visibility
+func (a *App) executeOpenFirstFileJavaScript(filePath string) {
+	// Read the file data
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		fmt.Printf("Error reading file %s for direct execution: %v\n", filePath, err)
+		return
+	}
+
+	// Get the file extension
+	extension := filepath.Ext(filePath)
+	if extension != "" {
+		extension = extension[1:] // Remove the leading dot
+	}
+	extension = strings.ToLower(extension)
+
+	// Get the filename
+	fileName := filepath.Base(filePath)
+
+	fmt.Printf("Opening FIRST FILE directly via JavaScript: %s\n", fileName)
+
+	// Base64 encode the file data for safe JavaScript transfer
+	base64Data := base64.StdEncoding.EncodeToString(data)
+
+	// Create JavaScript to handle the file with high priority
+	js := fmt.Sprintf(`
+		console.log("PRIORITY: Opening first file directly: %s");
+		
+		// Function to process the file with high priority
+		function processFirstFile() {
+			try {
+				// Check if the app is ready
+				if (!window.app || !window.app.fileHandler || !window.app.uiManager) {
+					console.log("App not fully ready yet, will retry in 100ms");
+					setTimeout(processFirstFile, 100);
+					return;
+				}
+				
+				// Convert base64 data to ArrayBuffer
+				const binaryString = window.atob("%s");
+				const bytes = new Uint8Array(binaryString.length);
+				for (let i = 0; i < binaryString.length; i++) {
+					bytes[i] = binaryString.charCodeAt(i);
+				}
+				const buffer = bytes.buffer;
+				
+				// Process the file as if it was dropped into the app
+				const extension = "%s";
+				const fileName = "%s";
+				
+				console.log("Processing primary file:", fileName);
+				
+				// First ensure UI is visible
+				window.app.uiManager.showAppContainer();
+				
+				// Extract the message info
+				let msgInfo;
+				if (extension === 'msg' && window.extractMsg) {
+					console.log("Extracting MSG file...");
+					msgInfo = window.extractMsg(buffer);
+				} else if (extension === 'eml' && window.extractEml) {
+					console.log("Extracting EML file...");
+					msgInfo = window.extractEml(buffer);
+				} else {
+					console.error("Unsupported file extension:", extension);
+					return;
+				}
+				
+				if (!msgInfo) {
+					console.error("Failed to extract message info");
+					return;
+				}
+				
+				console.log("Message extracted successfully");
+				
+				// Add the message
+				const message = window.app.messageHandler.addMessage(msgInfo, fileName);
+				
+				// Update the message list
+				window.app.uiManager.updateMessageList();
+				
+				// Show the message IMMEDIATELY
+				window.app.uiManager.showMessage(message);
+				
+				console.log("PRIORITY FILE processed and displayed successfully");
+			} catch (error) {
+				console.error("Error in first file processing:", error);
+			}
+		}
+		
+		// Start processing immediately
+		processFirstFile();
 	`, fileName, base64Data, extension, fileName)
 
 	// Execute the JavaScript
