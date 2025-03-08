@@ -72,45 +72,62 @@ class FileHandler {
     }
 
     // Handle file paths from the desktop application
-    handleDesktopFiles(filePaths) {
+    async handleDesktopFiles(filePaths) {
         console.log('handleDesktopFiles called with paths:', filePaths);
-        if (!Array.isArray(filePaths)) {
-            console.error('filePaths is not an array:', filePaths);
-            
-            // Try to handle it as a single string
-            if (typeof filePaths === 'string') {
-                console.log('Trying to handle as a single string path');
-                this.handleDesktopFile(filePaths);
-                return;
-            }
-            
+        
+        // Normalize input to array
+        let paths = filePaths;
+        if (typeof filePaths === 'string') {
+            console.log('Converting single string path to array');
+            paths = [filePaths];
+        } else if (!Array.isArray(filePaths)) {
+            console.error('Invalid input to handleDesktopFiles:', filePaths);
             return;
         }
         
-        if (filePaths.length === 0) {
-            console.error('No file paths provided to handleDesktopFiles');
+        // Filter out any invalid paths
+        paths = paths.filter(path => {
+            if (!path) {
+                console.warn('Skipping empty path');
+                return false;
+            }
+            const extension = path.toLowerCase().split('.').pop();
+            if (extension !== 'msg' && extension !== 'eml') {
+                console.warn('Skipping file with unsupported extension:', path);
+                return false;
+            }
+            return true;
+        });
+        
+        if (paths.length === 0) {
+            console.error('No valid files to process');
             return;
         }
         
-        // Process files one by one with a small delay between them
-        const processFiles = async (index) => {
-            if (index >= filePaths.length) {
-                console.log('Finished processing all files');
-                return;
-            }
-            
-            try {
-                await this.handleDesktopFile(filePaths[index]);
-            } catch (error) {
-                console.error('Error processing file:', filePaths[index], error);
-            }
-            
-            // Process next file after a short delay
-            setTimeout(() => processFiles(index + 1), 100);
-        };
+        console.log('Processing', paths.length, 'files:', paths);
         
-        // Start processing files
-        processFiles(0);
+        // Process all files
+        try {
+            // Hide welcome screen before processing files
+            this.uiManager.showAppContainer();
+            
+            // Process all files and collect their promises
+            const promises = paths.map(path => this.handleDesktopFile(path));
+            
+            // Wait for all files to be processed
+            await Promise.all(promises);
+            
+            // After all files are processed, show the last file
+            const messages = this.messageHandler.getMessages();
+            if (messages.length > 0) {
+                // Show the most recently added message (first in the list since we unshift)
+                this.uiManager.showMessage(messages[0]);
+            }
+            
+            console.log('All files processed successfully');
+        } catch (error) {
+            console.error('Error processing files:', error);
+        }
     }
 
     // Handle a browser File object
@@ -167,69 +184,43 @@ class FileHandler {
     // Handle a file path from the desktop application
     async handleDesktopFile(filePath) {
         console.log('handleDesktopFile called with path:', filePath);
+        
         return new Promise(async (resolve, reject) => {
             try {
                 // Get the file name from the path
-                const fileName = filePath.split(/[\\/]/).pop();
-                console.log('File name extracted from path:', fileName);
+                const fileName = filePath.split(/[/\\]/).pop();
+                console.log('Processing file:', fileName);
                 
-                // Read the file using the desktop bridge
-                console.log('Reading file using desktop bridge:', filePath);
-                let fileBuffer;
-                try {
-                    console.log('Calling window.desktopBridge.readFile with path:', filePath);
-                    fileBuffer = await window.desktopBridge.readFile(filePath);
-                    console.log('readFile returned successfully, buffer exists:', !!fileBuffer);
-                    if (fileBuffer) {
-                        console.log('Buffer length:', fileBuffer.length);
-                    }
-                } catch (readError) {
-                    console.error('Error reading file with original path:', readError);
-                    
-                    // Try with URI decoded path
-                    try {
-                        const decodedPath = decodeURIComponent(filePath);
-                        console.log('Trying with decoded path:', decodedPath);
-                        fileBuffer = await window.desktopBridge.readFile(decodedPath);
-                        console.log('readFile with decoded path returned successfully, buffer exists:', !!fileBuffer);
-                        if (fileBuffer) {
-                            console.log('Buffer length:', fileBuffer.length);
-                        }
-                    } catch (decodedError) {
-                        console.error('Error reading file with decoded path:', decodedError);
-                        reject(decodedError);
-                        return;
-                    }
-                }
-                
-                if (!fileBuffer) {
-                    const error = new Error('Failed to read file: ' + filePath);
+                // Get the file extension
+                const extension = fileName.toLowerCase().split('.').pop();
+                if (extension !== 'msg' && extension !== 'eml') {
+                    const error = new Error('Unsupported file type: ' + extension);
                     console.error(error);
                     reject(error);
                     return;
                 }
                 
-                console.log('File read successfully:', filePath, 'buffer length:', fileBuffer.length);
-                
-                const extension = fileName.toLowerCase().split('.').pop();
-                console.log('File extension:', extension);
+                // Read the file
+                let fileBuffer;
+                try {
+                    console.log('Reading file:', filePath);
+                    fileBuffer = await window.go.main.App.ReadFile(filePath);
+                    console.log('File read successfully:', fileName);
+                } catch (error) {
+                    console.error('Error reading file:', filePath, error);
+                    reject(error);
+                    return;
+                }
                 
                 let msgInfo;
                 try {
                     if (extension === 'msg') {
                         console.log('Extracting MSG file:', fileName);
-                        console.log('window.extractMsg exists:', !!window.extractMsg);
                         msgInfo = window.extractMsg(fileBuffer);
-                        console.log('MSG extraction complete, msgInfo exists:', !!msgInfo);
                     } else if (extension === 'eml') {
                         console.log('Extracting EML file:', fileName);
-                        console.log('window.extractEml exists:', !!window.extractEml);
                         msgInfo = window.extractEml(fileBuffer);
-                        console.log('EML extraction complete, msgInfo exists:', !!msgInfo);
                     }
-                    
-                    console.log('File extracted successfully:', fileName);
-                    console.log('Message info:', msgInfo ? 'valid' : 'invalid');
                     
                     if (!msgInfo) {
                         const error = new Error('Failed to extract message info from file: ' + fileName);
@@ -238,35 +229,13 @@ class FileHandler {
                         return;
                     }
                     
-                    console.log('Adding message to message handler');
-                    console.log('this.messageHandler exists:', !!this.messageHandler);
+                    // Add message to the handler
                     const message = this.messageHandler.addMessage(msgInfo, fileName);
-                    console.log('Message added successfully');
                     
-                    // Hide welcome screen and show app
-                    console.log('Showing app container');
-                    console.log('this.uiManager exists:', !!this.uiManager);
-                    this.uiManager.showAppContainer();
-                    console.log('App container shown');
-
                     // Update message list
-                    console.log('Updating message list');
                     this.uiManager.updateMessageList();
-                    console.log('Message list updated');
                     
-                    // Show first message if it's the only one
-                    console.log('Checking if this is the only message');
-                    console.log('Messages count:', this.messageHandler.getMessages().length);
-                    if (this.messageHandler.getMessages().length === 1) {
-                        console.log('Showing the message as it is the only one');
-                        this.uiManager.showMessage(message);
-                        console.log('Message shown');
-                    } else {
-                        console.log('Not showing the message as there are multiple messages');
-                    }
-                    
-                    resolve();
-                    console.log('handleDesktopFile completed successfully');
+                    resolve(message);
                 } catch (error) {
                     console.error('Error extracting file:', fileName, error);
                     reject(error);

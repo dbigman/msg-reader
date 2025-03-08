@@ -41,31 +41,20 @@ function initializeApp() {
                 window.runtime.EventsOn('files-to-open', (filePaths) => {
                     console.log('Received files-to-open event:', filePaths);
                     if (this.fileHandler) {
+                        // Process files immediately
                         this.fileHandler.handleDesktopFiles(filePaths);
                     } else {
                         console.error('FileHandler not initialized when receiving files-to-open event');
-                        // Store the files to open later
                         window._filesToOpenWhenReady = filePaths;
-                    }
-                });
-                
-                // Listen for force-open-files event
-                window.runtime.EventsOn('force-open-files', (filePaths) => {
-                    console.log('Received force-open-files event:', filePaths);
-                    if (this.fileHandler) {
-                        this.fileHandler.handleDesktopFiles(filePaths);
                     }
                 });
             }
             
-            // Check for stored files to open
+            // Check for stored files to open immediately
             if (window._filesToOpenWhenReady && window._filesToOpenWhenReady.length > 0) {
                 console.log('Found stored files to open in App constructor:', window._filesToOpenWhenReady);
-                setTimeout(() => {
-                    this.fileHandler.handleDesktopFiles(window._filesToOpenWhenReady);
-                    // Clear the stored files
-                    window._filesToOpenWhenReady = null;
-                }, 500);
+                this.fileHandler.handleDesktopFiles(window._filesToOpenWhenReady);
+                window._filesToOpenWhenReady = null;
             }
             
             // Signal that the frontend is ready

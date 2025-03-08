@@ -15,9 +15,9 @@ import (
 
 // App struct
 type App struct {
-	ctx                 context.Context
+	ctx                  context.Context
 	filesToOpenOnStartup []string
-	initialized         bool
+	initialized          bool
 }
 
 // NewApp creates a new App application struct
@@ -30,59 +30,43 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	fmt.Println("App startup called, context saved")
-	
+
+	// Mark the app as initialized immediately
+	a.initialized = true
+
+	// Show the window immediately
+	wailsRuntime.WindowShow(ctx)
+
 	// If there are files to open on startup, notify the frontend
 	if len(a.filesToOpenOnStartup) > 0 {
 		fmt.Println("Files to open on startup:", a.filesToOpenOnStartup)
-		
+
 		// Set up a channel to wait for frontend ready signal
 		frontendReady := make(chan bool)
-		
+
 		// Listen for frontend-ready event
 		wailsRuntime.EventsOn(ctx, "frontend-ready", func(optionalData ...interface{}) {
 			fmt.Println("Received frontend-ready event")
 			frontendReady <- true
 		})
-		
+
 		// Start a goroutine to handle file opening
 		go func() {
-			// Wait for either frontend ready signal or timeout
+			// Wait for either frontend ready signal or timeout with shorter timeout
 			select {
 			case <-frontendReady:
 				fmt.Println("Frontend is ready, proceeding with file opening")
-			case <-time.After(5 * time.Second):
+			case <-time.After(500 * time.Millisecond):
 				fmt.Println("Timeout waiting for frontend, attempting to open files anyway")
 			}
-			
-			// Ensure the window is fully created
-			time.Sleep(100 * time.Millisecond)
-			
-			// Try to open each file
+
+			// Try to open each file immediately
 			for _, filePath := range a.filesToOpenOnStartup {
-				fmt.Printf("Attempting to open file: %s\n", filePath)
-				
-				// Read the file to verify it exists and is accessible
-				data, err := os.ReadFile(filePath)
-				if err != nil {
-					fmt.Printf("Error reading file %s: %v\n", filePath, err)
-					continue
-				}
-				
-				fmt.Printf("Successfully read file %s, size: %d bytes\n", filePath, len(data))
-				
-				// Emit events to the frontend
-				wailsRuntime.EventsEmit(ctx, "files-to-open", []string{filePath})
-				time.Sleep(100 * time.Millisecond)
-				wailsRuntime.EventsEmit(ctx, "force-open-files", []string{filePath})
-				
-				// Also try direct file opening as a fallback
+				// First try to open the file directly
 				a.DirectOpenFile(filePath)
 			}
 		}()
 	}
-	
-	// Mark the app as initialized
-	a.initialized = true
 }
 
 // OpenFile allows the frontend to request opening a file
@@ -105,12 +89,12 @@ func (a *App) SaveFile(filePath string, data []byte) error {
 		fmt.Println("Error creating directory:", err)
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	
+
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		fmt.Println("Error writing file:", err)
 		return fmt.Errorf("failed to write file: %w", err)
 	}
-	
+
 	fmt.Println("File saved successfully")
 	return nil
 }
@@ -139,13 +123,13 @@ func (a *App) OpenFileDialog() ([]string, error) {
 			},
 		},
 	})
-	
+
 	if err != nil {
 		fmt.Println("Error opening file dialog:", err)
 	} else {
 		fmt.Println("Files selected from dialog:", files)
 	}
-	
+
 	return files, err
 }
 
@@ -156,13 +140,13 @@ func (a *App) SaveFileDialog(defaultFilename string) (string, error) {
 		Title:           "Save File",
 		DefaultFilename: defaultFilename,
 	})
-	
+
 	if err != nil {
 		fmt.Println("Error opening save dialog:", err)
 	} else {
 		fmt.Println("File selected for saving:", file)
 	}
-	
+
 	return file, err
 }
 
@@ -190,51 +174,51 @@ func (a *App) registerFileAssociationsWindows() (bool, error) {
 		fmt.Println("Error getting executable path:", err)
 		return false, fmt.Errorf("failed to get executable path: %w", err)
 	}
-	
+
 	fmt.Println("Executable path:", exePath)
-	
+
 	// Register .msg file association
 	msgCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\.msg", "/ve", "/t", "REG_SZ", "/d", "msgReader.MSG", "/f")
 	if err := msgCmd.Run(); err != nil {
 		fmt.Println("Error registering .msg file association:", err)
 		return false, fmt.Errorf("failed to register .msg file association: %w", err)
 	}
-	
+
 	// Register .eml file association
 	emlCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\.eml", "/ve", "/t", "REG_SZ", "/d", "msgReader.EML", "/f")
 	if err := emlCmd.Run(); err != nil {
 		fmt.Println("Error registering .eml file association:", err)
 		return false, fmt.Errorf("failed to register .eml file association: %w", err)
 	}
-	
+
 	// Create program entry for .msg
 	msgProgCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\msgReader.MSG", "/ve", "/t", "REG_SZ", "/d", "MSG Email File", "/f")
 	if err := msgProgCmd.Run(); err != nil {
 		fmt.Println("Error creating program entry for .msg:", err)
 		return false, fmt.Errorf("failed to create program entry for .msg: %w", err)
 	}
-	
+
 	// Create program entry for .eml
 	emlProgCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\msgReader.EML", "/ve", "/t", "REG_SZ", "/d", "EML Email File", "/f")
 	if err := emlProgCmd.Run(); err != nil {
 		fmt.Println("Error creating program entry for .eml:", err)
 		return false, fmt.Errorf("failed to create program entry for .eml: %w", err)
 	}
-	
+
 	// Create command for .msg
 	msgOpenCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\msgReader.MSG\\shell\\open\\command", "/ve", "/t", "REG_SZ", "/d", fmt.Sprintf("\"%s\" \"%%1\"", exePath), "/f")
 	if err := msgOpenCmd.Run(); err != nil {
 		fmt.Println("Error creating command for .msg:", err)
 		return false, fmt.Errorf("failed to create command for .msg: %w", err)
 	}
-	
+
 	// Create command for .eml
 	emlOpenCmd := exec.Command("reg", "add", "HKCU\\Software\\Classes\\msgReader.EML\\shell\\open\\command", "/ve", "/t", "REG_SZ", "/d", fmt.Sprintf("\"%s\" \"%%1\"", exePath), "/f")
 	if err := emlOpenCmd.Run(); err != nil {
 		fmt.Println("Error creating command for .eml:", err)
 		return false, fmt.Errorf("failed to create command for .eml: %w", err)
 	}
-	
+
 	fmt.Println("File associations registered successfully on Windows")
 	return true, nil
 }
@@ -250,7 +234,7 @@ func (a *App) registerFileAssociationsMacOS() (bool, error) {
 		Title:   "File Associations",
 		Message: "On macOS, file associations are handled by the system. Please right-click on a .msg or .eml file, select 'Get Info', change the 'Open with' option to msgReader, and click 'Change All'.",
 	})
-	
+
 	fmt.Println("Showed macOS file association dialog")
 	return true, nil
 }
@@ -264,27 +248,27 @@ func (a *App) registerFileAssociationsLinux() (bool, error) {
 		fmt.Println("Error getting executable path:", err)
 		return false, fmt.Errorf("failed to get executable path: %w", err)
 	}
-	
+
 	fmt.Println("Executable path:", exePath)
-	
+
 	// Create desktop entry file
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Println("Error getting user home directory:", err)
 		return false, fmt.Errorf("failed to get user home directory: %w", err)
 	}
-	
+
 	fmt.Println("User home directory:", homeDir)
-	
+
 	// Create applications directory if it doesn't exist
 	applicationsDir := filepath.Join(homeDir, ".local", "share", "applications")
 	if err := os.MkdirAll(applicationsDir, 0755); err != nil {
 		fmt.Println("Error creating applications directory:", err)
 		return false, fmt.Errorf("failed to create applications directory: %w", err)
 	}
-	
+
 	fmt.Println("Applications directory:", applicationsDir)
-	
+
 	// Create desktop entry file
 	desktopEntryPath := filepath.Join(applicationsDir, "msgreader.desktop")
 	desktopEntry := fmt.Sprintf(`[Desktop Entry]
@@ -297,29 +281,29 @@ Categories=Office;Email;
 Comment=MSG and EML file viewer
 Terminal=false
 `, exePath)
-	
+
 	fmt.Println("Writing desktop entry to:", desktopEntryPath)
 	if err := os.WriteFile(desktopEntryPath, []byte(desktopEntry), 0644); err != nil {
 		fmt.Println("Error creating desktop entry file:", err)
 		return false, fmt.Errorf("failed to create desktop entry file: %w", err)
 	}
-	
+
 	// Update desktop database
 	updateCmd := exec.Command("update-desktop-database", applicationsDir)
 	if err := updateCmd.Run(); err != nil {
 		// Not critical, just log the error
 		fmt.Printf("Warning: failed to update desktop database: %v\n", err)
 	}
-	
+
 	// Create MIME types directory if it doesn't exist
 	mimeDir := filepath.Join(homeDir, ".local", "share", "mime", "packages")
 	if err := os.MkdirAll(mimeDir, 0755); err != nil {
 		fmt.Println("Error creating MIME types directory:", err)
 		return false, fmt.Errorf("failed to create MIME types directory: %w", err)
 	}
-	
+
 	fmt.Println("MIME types directory:", mimeDir)
-	
+
 	// Create MIME types file
 	mimeFilePath := filepath.Join(mimeDir, "msgreader.xml")
 	mimeFile := `<?xml version="1.0" encoding="UTF-8"?>
@@ -334,20 +318,20 @@ Terminal=false
   </mime-type>
 </mime-info>
 `
-	
+
 	fmt.Println("Writing MIME types file to:", mimeFilePath)
 	if err := os.WriteFile(mimeFilePath, []byte(mimeFile), 0644); err != nil {
 		fmt.Println("Error creating MIME types file:", err)
 		return false, fmt.Errorf("failed to create MIME types file: %w", err)
 	}
-	
+
 	// Update MIME database
 	updateMimeCmd := exec.Command("update-mime-database", filepath.Join(homeDir, ".local", "share", "mime"))
 	if err := updateMimeCmd.Run(); err != nil {
 		// Not critical, just log the error
 		fmt.Printf("Warning: failed to update MIME database: %v\n", err)
 	}
-	
+
 	fmt.Println("File associations registered successfully on Linux")
 	return true, nil
 }
@@ -366,7 +350,7 @@ func (a *App) IsInitialized() bool {
 // DirectOpenFile directly opens a file and emits its content to the frontend
 func (a *App) DirectOpenFile(filePath string) {
 	fmt.Println("DirectOpenFile called with path:", filePath)
-	
+
 	// Check if file exists
 	_, err := os.Stat(filePath)
 	if err != nil {
@@ -380,23 +364,23 @@ func (a *App) DirectOpenFile(filePath string) {
 			filePath = absPath
 		}
 	}
-	
+
 	// Read the file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		fmt.Println("Error reading file:", err)
 		return
 	}
-	
+
 	// Get the file name from the path
 	fileName := filepath.Base(filePath)
 	fmt.Println("File name extracted from path:", fileName)
 	fmt.Println("File data size:", len(data))
-	
+
 	// Convert the data to a base64 string for embedding in JavaScript
 	base64Data := base64.StdEncoding.EncodeToString(data)
 	fmt.Println("Base64 data length:", len(base64Data))
-	
+
 	// Create a JavaScript function to process the file
 	js := fmt.Sprintf(`
 		console.log("Processing file directly in JavaScript");
@@ -473,7 +457,7 @@ func (a *App) DirectOpenFile(filePath string) {
 		// Start processing the file
 		processFileWhenReady();
 	`, base64Data, fileName)
-	
+
 	// Execute the JavaScript
 	fmt.Println("Executing JavaScript to process file")
 	wailsRuntime.WindowExecJS(a.ctx, js)
@@ -482,45 +466,33 @@ func (a *App) DirectOpenFile(filePath string) {
 // handleFileOpen handles macOS file open events
 func (a *App) handleFileOpen(filePath string) {
 	fmt.Printf("Received macOS file open event for: %s\n", filePath)
-	
+
 	// Get the absolute path
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		fmt.Printf("Error getting absolute path for %s: %v\n", filePath, err)
 		absPath = filePath
 	}
-	
+
 	// Verify the file exists and is accessible
 	if _, err := os.Stat(absPath); err != nil {
 		fmt.Printf("Error accessing file %s: %v\n", absPath, err)
 		return
 	}
-	
+
 	// If the app is not initialized yet, store the file for later
 	if !a.initialized {
 		fmt.Printf("App not initialized yet, storing file %s for later\n", absPath)
 		a.filesToOpenOnStartup = append(a.filesToOpenOnStartup, absPath)
 		return
 	}
-	
-	// Start a goroutine to handle the file opening
-	go func() {
-		fmt.Printf("Starting goroutine to open file: %s\n", absPath)
-		
-		// Try to read the file first to verify it's accessible
-		data, err := os.ReadFile(absPath)
-		if err != nil {
-			fmt.Printf("Error reading file %s: %v\n", absPath, err)
-			return
-		}
-		fmt.Printf("Successfully read file %s, size: %d bytes\n", absPath, len(data))
-		
-		// Emit events to the frontend
-		wailsRuntime.EventsEmit(a.ctx, "files-to-open", []string{absPath})
-		time.Sleep(100 * time.Millisecond)
-		wailsRuntime.EventsEmit(a.ctx, "force-open-files", []string{absPath})
-		
-		// Also try direct file opening as a fallback
-		a.DirectOpenFile(absPath)
-	}()
-} 
+
+	// Handle file opening immediately in the same goroutine for faster response
+	fmt.Printf("Opening file: %s\n", absPath)
+
+	// First try to open the file directly
+	a.DirectOpenFile(absPath)
+
+	// Also emit the event as a fallback
+	wailsRuntime.EventsEmit(a.ctx, "files-to-open", []string{absPath})
+}

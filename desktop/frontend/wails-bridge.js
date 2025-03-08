@@ -201,7 +201,6 @@ if (isWails) {
                 if (window._filesToOpenWhenReady && window._filesToOpenWhenReady.length > 0) {
                     console.log('Found stored files to open:', window._filesToOpenWhenReady);
                     window.app.fileHandler.handleDesktopFiles(window._filesToOpenWhenReady);
-                    // Clear the stored files
                     window._filesToOpenWhenReady = null;
                 } else {
                     // If no stored files, check for files to open on startup
@@ -209,12 +208,12 @@ if (isWails) {
                 }
             } else {
                 console.log('App not yet initialized, waiting...');
-                setTimeout(waitForAppInitialization, 100);
+                setTimeout(waitForAppInitialization, 10); // Reduced timeout significantly
             }
         };
 
-        // Start waiting for app initialization
-        setTimeout(waitForAppInitialization, 500);
+        // Start waiting for app initialization with shorter initial delay
+        setTimeout(waitForAppInitialization, 10);
 
         // Listen for the files-to-open event from the backend
         if (isWails) {
@@ -222,73 +221,17 @@ if (isWails) {
             window.runtime.EventsOn('files-to-open', (files) => {
                 console.log('Received files-to-open event:', files);
                 if (files && files.length > 0) {
-                    // Store the files to open once the app is ready
-                    console.log('Storing files to open once app is ready');
-                    window._filesToOpenWhenReady = files;
-                    
-                    // Try to handle the files if the app is already initialized
                     if (window.app && window.app.fileHandler) {
-                        console.log('App is already initialized, handling desktop files from event');
+                        // Handle files immediately if app is ready
+                        console.log('App is initialized, handling desktop files from event');
                         window.app.fileHandler.handleDesktopFiles(files);
                     } else {
-                        console.log('App not yet initialized, files will be opened when ready');
+                        // Store files only if app is not ready
+                        console.log('App not yet initialized, storing files for later');
+                        window._filesToOpenWhenReady = files;
                     }
                 } else {
                     console.error('Could not handle files from files-to-open event:', {
-                        filesExist: files && files.length > 0
-                    });
-                }
-            });
-            
-            // Listen for the force-open-files event (a more direct approach)
-            console.log('Setting up force-open-files event listener');
-            window.runtime.EventsOn('force-open-files', (files) => {
-                console.log('Received force-open-files event:', files);
-                if (files && files.length > 0) {
-                    // Try to handle the files immediately
-                    console.log('Attempting to force open files');
-                    
-                    // If app is not initialized, try to initialize it
-                    if (!window.app) {
-                        console.log('App not initialized, creating new App instance');
-                        try {
-                            // Try to create the app if it doesn't exist
-                            if (typeof App !== 'undefined') {
-                                window.app = new App();
-                                console.log('Created new App instance');
-                            } else {
-                                console.error('App class is not defined');
-                            }
-                        } catch (error) {
-                            console.error('Error creating App instance:', error);
-                        }
-                    }
-                    
-                    // Try different approaches to handle the files
-                    if (window.app && window.app.fileHandler) {
-                        console.log('Using app.fileHandler to handle files');
-                        window.app.fileHandler.handleDesktopFiles(files);
-                    } else if (window.FileHandler && window.MessageHandler && window.UIManager) {
-                        console.log('Creating temporary handlers to open files');
-                        try {
-                            const messageHandler = new window.MessageHandler();
-                            const uiManager = new window.UIManager(messageHandler);
-                            const fileHandler = new window.FileHandler(messageHandler, uiManager);
-                            fileHandler.handleDesktopFiles(files);
-                        } catch (error) {
-                            console.error('Error creating temporary handlers:', error);
-                        }
-                    } else {
-                        console.error('Could not handle files, required classes not available:', {
-                            appExists: !!window.app,
-                            fileHandlerExists: window.app && !!window.app.fileHandler,
-                            FileHandlerClass: !!window.FileHandler,
-                            MessageHandlerClass: !!window.MessageHandler,
-                            UIManagerClass: !!window.UIManager
-                        });
-                    }
-                } else {
-                    console.error('Could not handle files from force-open-files event:', {
                         filesExist: files && files.length > 0
                     });
                 }
