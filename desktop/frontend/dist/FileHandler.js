@@ -75,6 +75,12 @@ class FileHandler {
     async handleDesktopFiles(filePaths) {
         console.log('handleDesktopFiles called with paths:', filePaths);
         
+        // Sanity check - early return if there are no files
+        if (!filePaths || (Array.isArray(filePaths) && filePaths.length === 0)) {
+            console.error('No files provided to handleDesktopFiles');
+            return;
+        }
+        
         // Normalize input to array
         let paths = filePaths;
         if (typeof filePaths === 'string') {
@@ -100,33 +106,122 @@ class FileHandler {
         });
         
         if (paths.length === 0) {
-            console.error('No valid files to process');
+            console.error('No valid files to process after filtering');
             return;
         }
         
         console.log('Processing', paths.length, 'files:', paths);
         
-        // Process all files
         try {
-            // Hide welcome screen before processing files
+            // Always show app container before processing files
+            console.log('Showing app container');
             this.uiManager.showAppContainer();
             
-            // Process all files and collect their promises
-            const promises = paths.map(path => this.handleDesktopFile(path));
+            // Process each file one by one
+            let lastProcessedMessage = null;
             
-            // Wait for all files to be processed
-            await Promise.all(promises);
-            
-            // After all files are processed, show the last file
-            const messages = this.messageHandler.getMessages();
-            if (messages.length > 0) {
-                // Show the most recently added message (first in the list since we unshift)
-                this.uiManager.showMessage(messages[0]);
+            for (const path of paths) {
+                try {
+                    console.log('Processing file:', path);
+                    
+                    // Get the file name from the path
+                    const fileName = path.split(/[/\\]/).pop();
+                    console.log('File name:', fileName);
+                    
+                    // Get the extension
+                    const extension = fileName.toLowerCase().split('.').pop();
+                    console.log('File extension:', extension);
+                    
+                    // Process differently based on extension
+                    if (extension === 'msg' || extension === 'eml') {
+                        // Read the file
+                        console.log('Reading file data from:', path);
+                        let fileData = await this.readFile(path);
+                        
+                        if (!fileData || fileData.length === 0) {
+                            console.error('File data is empty or could not be read');
+                            continue; // Skip to next file
+                        }
+                        
+                        console.log('File data loaded, size:', fileData.length);
+                        
+                        // Extract message info
+                        let msgInfo;
+                        if (extension === 'msg') {
+                            console.log('Extracting MSG file...');
+                            msgInfo = window.extractMsg(fileData);
+                        } else {
+                            console.log('Extracting EML file...');
+                            msgInfo = window.extractEml(fileData);
+                        }
+                        
+                        if (!msgInfo) {
+                            console.error('Failed to extract message info from file:', fileName);
+                            continue; // Skip to next file
+                        }
+                        
+                        console.log('Message extracted successfully');
+                        
+                        // Add to message handler
+                        const message = this.messageHandler.addMessage(msgInfo, fileName);
+                        console.log('Message added to handler');
+                        
+                        // Update the message list in UI
+                        this.uiManager.updateMessageList();
+                        
+                        // Store the last processed message
+                        lastProcessedMessage = message;
+                    } else {
+                        console.warn('Unsupported file extension:', extension);
+                    }
+                } catch (error) {
+                    console.error('Error processing file:', path, error);
+                    // Continue with next file
+                }
             }
             
-            console.log('All files processed successfully');
+            // Display the message
+            if (lastProcessedMessage) {
+                console.log('Showing last processed message');
+                this.uiManager.showMessage(lastProcessedMessage);
+            } else {
+                // Fallback: try to show any available message
+                const messages = this.messageHandler.getMessages();
+                if (messages.length > 0) {
+                    console.log('Showing first message from message list');
+                    this.uiManager.showMessage(messages[0]);
+                } else {
+                    console.log('No messages to display');
+                }
+            }
         } catch (error) {
-            console.error('Error processing files:', error);
+            console.error('Error in file processing workflow:', error);
+        }
+    }
+    
+    // Helper to read a file from the backend
+    async readFile(filePath) {
+        try {
+            console.log('Reading file:', filePath);
+            
+            if (!window.go || !window.go.main || !window.go.main.App) {
+                throw new Error('Go backend not available');
+            }
+            
+            // Try OpenFile first
+            if (typeof window.go.main.App.OpenFile === 'function') {
+                return await window.go.main.App.OpenFile(filePath);
+            }
+            
+            // Fall back to ReadFile if available
+            if (typeof window.go.main.App.ReadFile === 'function') {
+                return await window.go.main.App.ReadFile(filePath);
+            }
+            
+            throw new Error('No suitable file reading method available');
+        } catch (error) {
+            console.error('Error reading file:', filePath, error);
+            throw error;
         }
     }
 
@@ -200,12 +295,24 @@ class FileHandler {
                     return;
                 }
                 
-                // Read the file
+                // Read the file using the appropriate method
                 let fileBuffer;
                 try {
                     console.log('Reading file:', filePath);
-                    fileBuffer = await window.go.main.App.ReadFile(filePath);
-                    console.log('File read successfully:', fileName);
+                    // Check which method is available (for compatibility)
+                    if (window.go && window.go.main && window.go.main.App && window.go.main.App.OpenFile) {
+                        fileBuffer = await window.go.main.App.OpenFile(filePath);
+                    } else if (window.go && window.go.main && window.go.main.App && window.go.main.App.ReadFile) {
+                        fileBuffer = await window.go.main.App.ReadFile(filePath);
+                    } else {
+                        throw new Error('No method available to read files from Go backend');
+                    }
+                    
+                    if (!fileBuffer || fileBuffer.length === 0) {
+                        throw new Error('Received empty file buffer');
+                    }
+                    
+                    console.log('File read successfully:', fileName, 'Buffer size:', fileBuffer.length);
                 } catch (error) {
                     console.error('Error reading file:', filePath, error);
                     reject(error);
@@ -229,11 +336,15 @@ class FileHandler {
                         return;
                     }
                     
+                    console.log('Successfully extracted message info from file:', fileName);
+                    
                     // Add message to the handler
                     const message = this.messageHandler.addMessage(msgInfo, fileName);
                     
                     // Update message list
                     this.uiManager.updateMessageList();
+                    
+                    console.log('Message added and UI updated for file:', fileName);
                     
                     resolve(message);
                 } catch (error) {

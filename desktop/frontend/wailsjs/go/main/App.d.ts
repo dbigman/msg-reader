@@ -5,11 +5,17 @@ export function DirectOpenFile(arg1:string):Promise<void>;
 
 export function GetFilesToOpenOnStartup():Promise<Array<string>>;
 
+export function GetPendingFiles():Promise<Array<string>>;
+
 export function IsInitialized():Promise<boolean>;
 
 export function OpenFile(arg1:string):Promise<Array<number>>;
 
 export function OpenFileDialog():Promise<Array<string>>;
+
+export function ReadFile(arg1:string):Promise<Array<number>>;
+
+export function ReadFileHeader(arg1:string,arg2:number):Promise<Array<number>>;
 
 export function RegisterFileAssociations():Promise<boolean>;
 

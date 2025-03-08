@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -18,11 +20,16 @@ type App struct {
 	ctx                  context.Context
 	filesToOpenOnStartup []string
 	initialized          bool
+	pendingFiles         []string
+	filesMutex           sync.Mutex
+	appReady             bool
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{}
+	return &App{
+		pendingFiles: []string{},
+	}
 }
 
 // startup is called when the app starts. The context is saved
@@ -31,54 +38,278 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	fmt.Println("App startup called, context saved")
 
-	// Mark the app as initialized immediately
-	a.initialized = true
-
 	// Show the window immediately
 	wailsRuntime.WindowShow(ctx)
 
-	// If there are files to open on startup, notify the frontend
+	// Mark the app as initialized AND ready immediately
+	// This fixes the issue where the app is visibly running but still marked as not ready
+	a.initialized = true
+	a.appReady = true
+	fmt.Println("App marked as ready on startup")
+
+	// We'll handle files from startup directly
 	if len(a.filesToOpenOnStartup) > 0 {
-		fmt.Println("Files to open on startup:", a.filesToOpenOnStartup)
+		startupFiles := append([]string{}, a.filesToOpenOnStartup...)
+		a.filesToOpenOnStartup = nil
+		fmt.Println("Files to process at startup:", startupFiles)
 
-		// Set up a channel to wait for frontend ready signal
-		frontendReady := make(chan bool)
-
-		// Listen for frontend-ready event
-		wailsRuntime.EventsOn(ctx, "frontend-ready", func(optionalData ...interface{}) {
-			fmt.Println("Received frontend-ready event")
-			frontendReady <- true
-		})
-
-		// Start a goroutine to handle file opening
+		// Launch a goroutine to handle these files after a short delay
+		// to allow the UI to initialize
 		go func() {
-			// Wait for either frontend ready signal or timeout with shorter timeout
-			select {
-			case <-frontendReady:
-				fmt.Println("Frontend is ready, proceeding with file opening")
-			case <-time.After(500 * time.Millisecond):
-				fmt.Println("Timeout waiting for frontend, attempting to open files anyway")
-			}
+			// Short delay to let the UI initialize
+			time.Sleep(500 * time.Millisecond)
 
-			// Try to open each file immediately
-			for _, filePath := range a.filesToOpenOnStartup {
-				// First try to open the file directly
-				a.DirectOpenFile(filePath)
+			// Process each startup file
+			for _, file := range startupFiles {
+				fmt.Println("Processing startup file:", file)
+				// Try direct JavaScript execution
+				a.executeOpenFileJavaScript(file)
 			}
 		}()
 	}
+
+	// Still listen for frontend-ready as a backup
+	wailsRuntime.EventsOn(ctx, "frontend-ready", func(optionalData ...interface{}) {
+		fmt.Println("Received frontend-ready event (frontend UI is fully initialized)")
+
+		// Emit an event to tell the frontend we're ready to process files
+		wailsRuntime.EventsEmit(a.ctx, "backend-ready", true)
+	})
+}
+
+// handleFileOpen handles macOS file open events
+func (a *App) handleFileOpen(filePath string) {
+	fmt.Printf("Received macOS file open event for: %s\n", filePath)
+
+	// Get the absolute path
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		fmt.Printf("Error getting absolute path for %s: %v\n", filePath, err)
+		absPath = filePath
+	}
+
+	// Verify the file exists and is accessible
+	if _, err := os.Stat(absPath); err != nil {
+		fmt.Printf("Error accessing file %s: %v\n", absPath, err)
+		return
+	}
+
+	// IMPORTANT: We're treating the app as ready once we reach here
+	// This ensures files can be opened even if the frontend-ready event failed
+	if !a.appReady {
+		a.appReady = true
+		fmt.Println("App marked as ready on file open event")
+	}
+
+	// Store the file in our cache
+	a.filesMutex.Lock()
+	a.pendingFiles = append(a.pendingFiles, absPath)
+	a.filesMutex.Unlock()
+
+	// Direct processing approach
+	fmt.Printf("Processing file directly: %s\n", absPath)
+
+	// 1. Try to emit an event to the frontend
+	wailsRuntime.EventsEmit(a.ctx, "open-file-now", absPath)
+
+	// 2. Also use direct JavaScript execution
+	a.executeOpenFileJavaScript(absPath)
+}
+
+// executeOpenFileJavaScript executes JavaScript directly to open a file
+func (a *App) executeOpenFileJavaScript(filePath string) {
+	// Read the file data
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		fmt.Printf("Error reading file %s for direct execution: %v\n", filePath, err)
+		return
+	}
+
+	// Get the file extension
+	extension := filepath.Ext(filePath)
+	if extension != "" {
+		extension = extension[1:] // Remove the leading dot
+	}
+	extension = strings.ToLower(extension)
+
+	// Get the filename
+	fileName := filepath.Base(filePath)
+
+	fmt.Printf("Executing direct JavaScript to open file: %s\n", fileName)
+
+	// Base64 encode the file data for safe JavaScript transfer
+	base64Data := base64.StdEncoding.EncodeToString(data)
+
+	// Create JavaScript to handle the file
+	js := fmt.Sprintf(`
+		console.log("Direct JavaScript execution to open file: %s");
+		
+		function processFile() {
+			try {
+				// Check if the app is ready
+				if (!window.app || !window.app.fileHandler) {
+					console.log("App not ready, will retry in 200ms");
+					setTimeout(processFile, 200);
+					return;
+				}
+				
+				// Convert base64 data to ArrayBuffer
+				const binaryString = window.atob("%s");
+				const bytes = new Uint8Array(binaryString.length);
+				for (let i = 0; i < binaryString.length; i++) {
+					bytes[i] = binaryString.charCodeAt(i);
+				}
+				const buffer = bytes.buffer;
+				
+				// Process the file as if it was dropped into the app
+				const extension = "%s";
+				const fileName = "%s";
+				
+				console.log("Processing file:", fileName);
+				
+				// Extract the message info
+				let msgInfo;
+				if (extension === 'msg' && window.extractMsg) {
+					console.log("Extracting MSG file...");
+					msgInfo = window.extractMsg(buffer);
+				} else if (extension === 'eml' && window.extractEml) {
+					console.log("Extracting EML file...");
+					msgInfo = window.extractEml(buffer);
+				} else {
+					console.error("Unsupported file extension:", extension);
+					return;
+				}
+				
+				if (!msgInfo) {
+					console.error("Failed to extract message info");
+					return;
+				}
+				
+				console.log("Message extracted successfully");
+				
+				// Add the message
+				const message = window.app.messageHandler.addMessage(msgInfo, fileName);
+				
+				// Show app container
+				window.app.uiManager.showAppContainer();
+				
+				// Update the message list
+				window.app.uiManager.updateMessageList();
+				
+				// Show the message
+				window.app.uiManager.showMessage(message);
+				
+				console.log("File processed successfully via direct JavaScript execution");
+			} catch (error) {
+				console.error("Error in direct file processing:", error);
+			}
+		}
+		
+		// Start processing
+		processFile();
+	`, fileName, base64Data, extension, fileName)
+
+	// Execute the JavaScript
+	wailsRuntime.WindowExecJS(a.ctx, js)
+}
+
+// GetPendingFiles returns any files waiting to be processed
+func (a *App) GetPendingFiles() []string {
+	a.filesMutex.Lock()
+	defer a.filesMutex.Unlock()
+
+	// Combine all pending files
+	allPendingFiles := append([]string{}, a.filesToOpenOnStartup...)
+	allPendingFiles = append(allPendingFiles, a.pendingFiles...)
+
+	// Clear the caches after returning them
+	a.filesToOpenOnStartup = []string{}
+	a.pendingFiles = []string{}
+
+	fmt.Printf("GetPendingFiles returning %d files: %v\n", len(allPendingFiles), allPendingFiles)
+	return allPendingFiles
 }
 
 // OpenFile allows the frontend to request opening a file
 func (a *App) OpenFile(filePath string) ([]byte, error) {
 	fmt.Println("OpenFile called with path:", filePath)
+
+	// Verify file exists before trying to read
+	if _, err := os.Stat(filePath); err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("File does not exist: %s\n", filePath)
+			return nil, fmt.Errorf("file does not exist: %w", err)
+		}
+		fmt.Printf("Error checking file: %s - %v\n", filePath, err)
+		return nil, fmt.Errorf("error checking file: %w", err)
+	}
+
+	// File exists, read it
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
+		fmt.Printf("Error reading file: %s - %v\n", filePath, err)
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
-	fmt.Println("File read successfully, size:", len(data))
+
+	fmt.Printf("File read successfully: %s, size: %d bytes\n", filePath, len(data))
 	return data, nil
+}
+
+// ReadFile is an alias for OpenFile for better naming compatibility
+func (a *App) ReadFile(filePath string) ([]byte, error) {
+	fmt.Println("ReadFile called (alias for OpenFile) with path:", filePath)
+	return a.OpenFile(filePath)
+}
+
+// ReadFileHeader reads just the first n bytes of a file to verify it exists and is readable
+func (a *App) ReadFileHeader(filePath string, bytesToRead int) ([]byte, error) {
+	fmt.Printf("ReadFileHeader called for file: %s, reading %d bytes\n", filePath, bytesToRead)
+
+	// Verify file exists before trying to read
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("File does not exist: %s\n", filePath)
+			return nil, fmt.Errorf("file does not exist: %w", err)
+		}
+		fmt.Printf("Error checking file: %s - %v\n", filePath, err)
+		return nil, fmt.Errorf("error checking file: %w", err)
+	}
+
+	// Check file size and adjust bytes to read if necessary
+	fileSize := fileInfo.Size()
+	if fileSize == 0 {
+		fmt.Printf("File is empty: %s\n", filePath)
+		return []byte{}, nil
+	}
+
+	if bytesToRead <= 0 {
+		bytesToRead = 10 // Default to reading 10 bytes
+	}
+
+	if int64(bytesToRead) > fileSize {
+		bytesToRead = int(fileSize)
+	}
+
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		fmt.Printf("Error opening file: %s - %v\n", filePath, err)
+		return nil, fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
+	// Read the first few bytes
+	header := make([]byte, bytesToRead)
+	n, err := file.Read(header)
+	if err != nil {
+		fmt.Printf("Error reading file header: %s - %v\n", filePath, err)
+		return nil, fmt.Errorf("error reading file header: %w", err)
+	}
+
+	// Return only the bytes that were actually read
+	fmt.Printf("Successfully read %d bytes from file: %s\n", n, filePath)
+	return header[:n], nil
 }
 
 // SaveFile allows the frontend to save a file
@@ -461,38 +692,4 @@ func (a *App) DirectOpenFile(filePath string) {
 	// Execute the JavaScript
 	fmt.Println("Executing JavaScript to process file")
 	wailsRuntime.WindowExecJS(a.ctx, js)
-}
-
-// handleFileOpen handles macOS file open events
-func (a *App) handleFileOpen(filePath string) {
-	fmt.Printf("Received macOS file open event for: %s\n", filePath)
-
-	// Get the absolute path
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		fmt.Printf("Error getting absolute path for %s: %v\n", filePath, err)
-		absPath = filePath
-	}
-
-	// Verify the file exists and is accessible
-	if _, err := os.Stat(absPath); err != nil {
-		fmt.Printf("Error accessing file %s: %v\n", absPath, err)
-		return
-	}
-
-	// If the app is not initialized yet, store the file for later
-	if !a.initialized {
-		fmt.Printf("App not initialized yet, storing file %s for later\n", absPath)
-		a.filesToOpenOnStartup = append(a.filesToOpenOnStartup, absPath)
-		return
-	}
-
-	// Handle file opening immediately in the same goroutine for faster response
-	fmt.Printf("Opening file: %s\n", absPath)
-
-	// First try to open the file directly
-	a.DirectOpenFile(absPath)
-
-	// Also emit the event as a fallback
-	wailsRuntime.EventsEmit(a.ctx, "files-to-open", []string{absPath})
 }

@@ -10,6 +10,10 @@ export function GetFilesToOpenOnStartup() {
   return window['go']['main']['App']['GetFilesToOpenOnStartup']();
 }
 
+export function GetPendingFiles() {
+  return window['go']['main']['App']['GetPendingFiles']();
+}
+
 export function IsInitialized() {
   return window['go']['main']['App']['IsInitialized']();
 }
@@ -20,6 +24,14 @@ export function OpenFile(arg1) {
 
 export function OpenFileDialog() {
   return window['go']['main']['App']['OpenFileDialog']();
+}
+
+export function ReadFile(arg1) {
+  return window['go']['main']['App']['ReadFile'](arg1);
+}
+
+export function ReadFileHeader(arg1, arg2) {
+  return window['go']['main']['App']['ReadFileHeader'](arg1, arg2);
 }
 
 export function RegisterFileAssociations() {

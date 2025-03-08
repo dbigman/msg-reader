@@ -29,39 +29,104 @@ function initializeApp() {
     class App {
         constructor() {
             console.log('App constructor called');
+            
+            // Initialize core components
             this.messageHandler = new window.MessageHandler();
             this.uiManager = new window.UIManager(this.messageHandler);
             this.fileHandler = new window.FileHandler(this.messageHandler, this.uiManager);
             
-            // Set up event listeners for file opening
-            if (typeof window.runtime !== 'undefined') {
-                console.log('Setting up Wails runtime event listeners');
+            // Setup event listeners first
+            this.setupEventListeners();
+            
+            // IMPORTANT: Send multiple ready signals to ensure the backend receives it
+            this.signalReadyToBackend();
+        }
+        
+        // Send ready signal multiple ways to ensure it's received
+        signalReadyToBackend() {
+            // First attempt - immediate
+            this.sendReadySignal();
+            
+            // Second attempt - after requestAnimationFrame
+            requestAnimationFrame(() => {
+                this.sendReadySignal();
                 
-                // Listen for files-to-open event
-                window.runtime.EventsOn('files-to-open', (filePaths) => {
-                    console.log('Received files-to-open event:', filePaths);
-                    if (this.fileHandler) {
-                        // Process files immediately
-                        this.fileHandler.handleDesktopFiles(filePaths);
-                    } else {
-                        console.error('FileHandler not initialized when receiving files-to-open event');
-                        window._filesToOpenWhenReady = filePaths;
-                    }
-                });
-            }
-            
-            // Check for stored files to open immediately
-            if (window._filesToOpenWhenReady && window._filesToOpenWhenReady.length > 0) {
-                console.log('Found stored files to open in App constructor:', window._filesToOpenWhenReady);
-                this.fileHandler.handleDesktopFiles(window._filesToOpenWhenReady);
-                window._filesToOpenWhenReady = null;
-            }
-            
-            // Signal that the frontend is ready
-            if (typeof window.runtime !== 'undefined') {
-                console.log('Emitting frontend-ready event');
+                // Third attempt - after a short delay
+                setTimeout(() => {
+                    this.sendReadySignal();
+                }, 500);
+            });
+        }
+        
+        // Helper to send the ready signal
+        sendReadySignal() {
+            if (window.runtime) {
+                console.log('Sending frontend-ready signal to backend');
                 window.runtime.EventsEmit('frontend-ready');
+            } else {
+                console.error('Runtime not available, cannot signal readiness');
             }
+        }
+        
+        setupEventListeners() {
+            if (!window.runtime) {
+                console.error('Wails runtime not available for event setup');
+                return;
+            }
+            
+            console.log('Setting up Wails runtime event listeners');
+            
+            // Listen for backend-ready event - backend has finished processing our frontend-ready signal
+            window.runtime.EventsOn('backend-ready', async (isReady) => {
+                console.log('Received backend-ready event, checking for pending files');
+                
+                try {
+                    // Actively fetch any pending files from the backend
+                    const pendingFiles = await window.go.main.App.GetPendingFiles();
+                    console.log('Retrieved pending files from backend:', pendingFiles);
+                    
+                    if (pendingFiles && pendingFiles.length > 0) {
+                        console.log('Processing pending files:', pendingFiles);
+                        this.fileHandler.handleDesktopFiles(pendingFiles);
+                    } else {
+                        console.log('No pending files to process');
+                    }
+                } catch (error) {
+                    console.error('Error retrieving pending files:', error);
+                }
+            });
+            
+            // Listen for new-files-available event - files have been added while app is running
+            window.runtime.EventsOn('new-files-available', async () => {
+                console.log('Received new-files-available event, fetching new files');
+                
+                try {
+                    // Fetch the new files from the backend
+                    const newFiles = await window.go.main.App.GetPendingFiles();
+                    console.log('Retrieved new files from backend:', newFiles);
+                    
+                    if (newFiles && newFiles.length > 0) {
+                        console.log('Processing new files:', newFiles);
+                        this.fileHandler.handleDesktopFiles(newFiles);
+                    } else {
+                        console.log('No new files to process');
+                    }
+                } catch (error) {
+                    console.error('Error retrieving new files:', error);
+                }
+            });
+            
+            // Direct file open event - most direct way to open a file
+            window.runtime.EventsOn('open-file-now', (filePath) => {
+                console.log('Received direct open-file-now event for:', filePath);
+                
+                if (this.fileHandler) {
+                    console.log('Processing file directly:', filePath);
+                    this.fileHandler.handleDesktopFiles([filePath]);
+                } else {
+                    console.error('FileHandler not initialized, cannot process file:', filePath);
+                }
+            });
         }
 
         showMessage(index) {
