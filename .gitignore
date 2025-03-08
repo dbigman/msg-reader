@@ -7,3 +7,4 @@ doc/msg/*.msg
 
 # Desktop
 desktop/build/*
+NOTES.md
